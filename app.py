@@ -1,12 +1,14 @@
-# app.py — single-file 2048 + Expectimax + Streamlit UI
+# app.py — 2048 Game + Expectimax AI using SO reference heuristics
 import streamlit as st
 import random
 import copy
 import math
-from typing import List, Tuple
 import numpy as np
+from typing import List, Tuple, Optional
 
-# ----------------- 2048 ENGINE (correct move logic) -----------------
+# ------------------------------------------------------------
+#                    2048 GAME ENGINE
+# ------------------------------------------------------------
 class Game2048:
     def __init__(self, size=4, seed=None):
         self.size = size
@@ -16,7 +18,6 @@ class Game2048:
         self.reset()
 
     def reset(self):
-        # start with two tiles, both forced to 2
         self.grid = [[0]*self.size for _ in range(self.size)]
         self.score = 0
         self._add_random_tile(force_two=True)
@@ -30,28 +31,23 @@ class Game2048:
         return g
 
     def _add_random_tile(self, force_two=False):
-        empties = [(r,c) for r in range(self.size) for c in range(self.size) if self.grid[r][c]==0]
+        empties = [(r,c) for r in range(self.size) if True for c in range(self.size) if self.grid[r][c]==0]
         if not empties:
             return False
         r,c = random.choice(empties)
-        if force_two:
-            self.grid[r][c] = 2
-        else:
-            self.grid[r][c] = 4 if random.random() < 0.1 else 2
+        self.grid[r][c] = 2 if force_two else (4 if random.random()<0.1 else 2)
         return True
 
     def can_move(self):
-        # empty cell?
-        for r in range(self.size):
-            for c in range(self.size):
-                if self.grid[r][c] == 0:
-                    return True
-        # horizontal merge possible?
+        # empty cell exists
+        if any(self.grid[r][c]==0 for r in range(self.size) for c in range(self.size)):
+            return True
+        # horizontal merge
         for r in range(self.size):
             for c in range(self.size-1):
                 if self.grid[r][c] == self.grid[r][c+1]:
                     return True
-        # vertical merge possible?
+        # vertical merge
         for c in range(self.size):
             for r in range(self.size-1):
                 if self.grid[r][c] == self.grid[r+1][c]:
@@ -59,276 +55,391 @@ class Game2048:
         return False
 
     @staticmethod
-    def _move_row_left(row: List[int]) -> Tuple[List[int], int]:
-        size = len(row)
-        tight = [v for v in row if v != 0]
-        new_row = []
-        points = 0
-        i = 0
+    def _move_row_left(row: List[int]):
+        tight = [v for v in row if v!=0]
+        new = []
+        pts = 0
+        i=0
         while i < len(tight):
             if i+1 < len(tight) and tight[i] == tight[i+1]:
                 merged = tight[i]*2
-                new_row.append(merged)
-                points += merged
+                new.append(merged)
+                pts += merged
                 i += 2
             else:
-                new_row.append(tight[i])
+                new.append(tight[i])
                 i += 1
-        new_row += [0]*(size - len(new_row))
-        return new_row, points
+        new += [0]*(len(row)-len(new))
+        return new, pts
 
-    def move(self, direction: str) -> Tuple[bool,int]:
-        moved = False
-        points_total = 0
-        size = self.size
+    def move(self, direction: str):
+        moved=False
+        total_pts=0
+        N=self.size
 
-        if direction == 'left' or direction == 'right':
-            for r in range(size):
-                row = list(self.grid[r])
-                if direction == 'right':
-                    row = list(reversed(row))
+        if direction in ('left','right'):
+            for r in range(N):
+                row=list(self.grid[r])
+                if direction=='right':
+                    row=row[::-1]
                 new_row, pts = self._move_row_left(row)
-                if direction == 'right':
-                    new_row = list(reversed(new_row))
+                if direction=='right':
+                    new_row=new_row[::-1]
                 if new_row != self.grid[r]:
-                    moved = True
+                    moved=True
                     self.grid[r] = new_row
-                    points_total += pts
-        elif direction == 'up' or direction == 'down':
-            for c in range(size):
-                col = [self.grid[r][c] for r in range(size)]
-                if direction == 'down':
-                    col = list(reversed(col))
+                    total_pts += pts
+
+        elif direction in ('up','down'):
+            for c in range(N):
+                col=[self.grid[r][c] for r in range(N)]
+                if direction=='down':
+                    col=col[::-1]
                 new_col, pts = self._move_row_left(col)
-                if direction == 'down':
-                    new_col = list(reversed(new_col))
-                for r in range(size):
+                if direction=='down':
+                    new_col=new_col[::-1]
+                for r in range(N):
                     if self.grid[r][c] != new_col[r]:
-                        moved = True
+                        moved=True
                     self.grid[r][c] = new_col[r]
-                points_total += pts
-        else:
-            raise ValueError("Invalid direction")
+                total_pts += pts
 
         if moved:
-            self.score += points_total
+            self.score += total_pts
             self._add_random_tile()
-        return moved, points_total
+        return moved, total_pts
 
-# ----------------- Heuristic & Expectimax Agent -----------------
-def heuristic(grid: List[List[int]]) -> float:
-    arr = np.array(grid)
-    empties = float(np.sum(arr==0))
-    max_tile = float(np.max(arr))
-    smoothness = -calc_smoothness(arr)
-    monotonicity = calc_monotonicity(arr)
-    return 2.7*empties + 1.0*math.log(max_tile+1) + 0.1*smoothness + 1.0*monotonicity
+# ------------------------------------------------------------
+#              HEURISTICS FROM STACKOVERFLOW
+# ------------------------------------------------------------
+def count_potential_merges(a):
+    merges=0
+    for r in range(4):
+        for c in range(3):
+            if a[r,c]!=0 and a[r,c]==a[r,c+1]:
+                merges+=1
+    for c in range(4):
+        for r in range(3):
+            if a[r,c]!=0 and a[r,c]==a[r+1,c]:
+                merges+=1
+    return merges
 
-def calc_smoothness(arr):
-    s = 0.0
-    rows,cols = arr.shape
-    for r in range(rows):
-        for c in range(cols):
-            if arr[r,c]==0: continue
-            val = math.log(arr[r,c], 2)
-            for (dr,dc) in [(0,1),(1,0)]:
-                nr, nc = r+dr, c+dc
-                if 0 <= nr < rows and 0 <= nc < cols and arr[nr,nc]!=0:
-                    nval = math.log(arr[nr,nc],2)
-                    s += abs(val - nval)
+def smoothness(a):
+    logs=np.where(a>0, np.log2(a), 0)
+    s=0
+    for r in range(4):
+        for c in range(4):
+            if a[r,c]==0: continue
+            v=logs[r,c]
+            if c+1<4 and a[r,c+1]!=0:
+                s -= abs(v-logs[r,c+1])
+            if r+1<4 and a[r+1,c]!=0:
+                s -= abs(v-logs[r+1,c])
     return s
 
-def calc_monotonicity(arr):
-    score = 0.0
-    rows,cols = arr.shape
-    for r in range(rows):
-        vals = [0 if v==0 else math.log(v,2) for v in arr[r]]
-        dec = sum(max(0, vals[i]-vals[i+1]) for i in range(len(vals)-1))
-        inc = sum(max(0, vals[i+1]-vals[i]) for i in range(len(vals)-1))
-        score += max(dec, inc)
-    for c in range(cols):
-        vals = [0 if v==0 else math.log(v,2) for v in arr[:,c]]
-        dec = sum(max(0, vals[i]-vals[i+1]) for i in range(len(vals)-1))
-        inc = sum(max(0, vals[i+1]-vals[i]) for i in range(len(vals)-1))
-        score += max(dec, inc)
+def rank_weighted_monotonicity(a):
+    logs=np.where(a>0, np.log2(a),0)
+    score=0
+    # rows
+    for r in range(4):
+        for c in range(3):
+            if logs[r,c] < logs[r,c+1]:
+                score -= (logs[r,c]+logs[r,c+1])*0.5
+    # cols
+    for c in range(4):
+        for r in range(3):
+            if logs[r,c] < logs[r+1,c]:
+                score -= (logs[r,c]+logs[r+1,c])*0.5
     return score
 
-class ExpectimaxAgent:
-    def __init__(self, depth=3):
-        self.depth = depth
-        self.actions = ['up','down','left','right']
+def corner_row_integrity(a, corner=(3,3)):
+    logs=np.where(a>0, np.log2(a),0)
+    r,c=corner
+    val=0.0
+    # check bottom row
+    row=logs[r,:]
+    val+= np.sum(np.diff(row)<=0)*5
+    # right column
+    col=logs[:,c]
+    val+= np.sum(np.diff(col)<=0)*5
+    return val
 
-    def get_best_move(self, game: Game2048) -> str:
-        best_move = None
-        best_score = -float('inf')
-        for a in self.actions:
-            g = game.clone()
-            moved, _ = g.move(a)
+def heuristic(grid, corner=(3,3)):
+    a=np.array(grid)
+    empties=float(np.sum(a==0))
+    merges=float(count_potential_merges(a))
+    smooth=float(smoothness(a))
+    mono=float(rank_weighted_monotonicity(a))
+    corner_int=float(corner_row_integrity(a, corner))
+    max_tile = int(a.max()) if a.max()>0 else 0
+
+    if max_tile>0:
+        if a[corner]==max_tile:
+            corner_bonus = max_tile * 12
+        else:
+            corner_bonus = -max_tile * 24
+    else:
+        corner_bonus=0
+
+    score = (
+        empties*270 +
+        merges*110 +
+        smooth*1 +
+        mono*8 +
+        corner_int*18 +
+        corner_bonus +
+        math.log(max_tile+1)*40
+    )
+    return float(score)
+
+# ------------------------------------------------------------
+#                EXPECTIMAX AGENT
+# ------------------------------------------------------------
+class ExpectimaxAgent:
+    def __init__(self, depth=3, preferred_corner=(3,3), skip_fours=True):
+        self.depth=depth
+        self.preferred_corner = preferred_corner
+        self.skip_fours = skip_fours
+        self.actions=['up','down','left','right']
+        self.preferred=['down','right','left','up']
+        self.cache={}
+
+    def max_in_corner(self, grid):
+        a=np.array(grid)
+        return a[self.preferred_corner] == a.max()
+
+    def breaks_corner(self, before_grid, after_grid):
+        a=np.array(before_grid)
+        b=np.array(after_grid)
+        max_tile=a.max()
+        r,c=self.preferred_corner
+        if a[r,c] == max_tile and b[r,c] != max_tile:
+            return True
+        return False
+
+    def get_best_move(self, game):
+        empties=sum(row.count(0) for row in game.grid)
+        depth=4 if empties<=3 else self.depth
+
+        best_move=None
+        best_score=-1e18
+        violating=[]
+
+        for a in self.preferred:
+            g=game.clone()
+            moved,_=g.move(a)
             if not moved: continue
-            val = self._expectimax(g, self.depth-1, is_player=False)
+
+            if self.breaks_corner(game.grid, g.grid):
+                violating.append((a,g))
+                continue
+
+            val=self._expectimax(g, depth-1, False)
             if val > best_score:
-                best_score = val
-                best_move = a
+                best_score=val
+                best_move=a
+
+        if best_move is None and violating:
+            best_val=-1e18
+            for a,g in violating:
+                v=heuristic(g.grid, self.preferred_corner)
+                if v > best_val:
+                    best_val=v
+                    best_move=a
+
+        if best_move is None:
+            for a in self.actions:
+                g=game.clone()
+                moved,_=g.move(a)
+                if not moved: continue
+                val=self._expectimax(g, depth-1, False)
+                if val > best_score:
+                    best_score=val
+                    best_move=a
+
         return best_move
 
-    def _expectimax(self, game: Game2048, depth: int, is_player: bool):
-        if depth == 0 or not game.can_move():
-            return heuristic(game.grid)
+    def _expectimax(self, game, depth, is_player):
+        key=(tuple(tuple(r) for r in game.grid), depth, is_player)
+        if key in self.cache:
+            return self.cache[key]
+
+        if depth==0 or not game.can_move():
+            val=heuristic(game.grid, self.preferred_corner)
+            self.cache[key]=val
+            return val
+
         if is_player:
-            best = -float('inf')
+            best=-1e18
             for a in self.actions:
-                g2 = game.clone()
-                moved, _ = g2.move(a)
+                g=game.clone()
+                moved,_=g.move(a)
                 if not moved: continue
-                val = self._expectimax(g2, depth-1, is_player=False)
-                if val > best: best = val
-            return best if best!=-float('inf') else heuristic(game.grid)
+                val=self._expectimax(g, depth-1, False)
+                best=max(best, val)
+            if best==-1e18:
+                best=heuristic(game.grid, self.preferred_corner)
+            self.cache[key]=best
+            return best
+
         else:
-            empties = [(r,c) for r in range(game.size) for c in range(game.size) if game.grid[r][c]==0]
+            empties=[(r,c) for r in range(4) for c in range(4) if game.grid[r][c]==0]
             if not empties:
-                return heuristic(game.grid)
-            total = 0.0
-            for (r,c) in empties:
-                for tile_val, prob in [(2,0.9),(4,0.1)]:
-                    g2 = game.clone()
-                    g2.grid[r][c] = tile_val
-                    total += prob * self._expectimax(g2, depth-1, is_player=True)
-            return total / len(empties)
+                val=heuristic(game.grid, self.preferred_corner)
+                self.cache[key]=val
+                return val
 
-# ----------------- STREAMLIT UI -----------------
+            total=0
+            for r,c in empties:
+                g2=game.clone()
+                g2.grid[r][c]=2
+                total += 0.9*self._expectimax(g2, depth-1, True)
+
+                if not self.skip_fours:
+                    g4=game.clone()
+                    g4.grid[r][c]=4
+                    total += 0.1*self._expectimax(g4, depth-1, True)
+                else:
+                    g4=game.clone()
+                    g4.grid[r][c]=4
+                    total += 0.1*heuristic(g4.grid, self.preferred_corner)
+
+            val=total/len(empties)
+            self.cache[key]=val
+            return val
+
+# ------------------------------------------------------------
+#                 STREAMLIT UI
+# ------------------------------------------------------------
 st.set_page_config(page_title="2048 AI", page_icon="🎮", layout="centered")
-st.title("2048 — Play or Let the AI Play (Fixed)")
+st.title("2048 — Expectimax AI (SO Strategies)")
 
-# session state — initialize once
 if "game" not in st.session_state:
-    st.session_state.game = Game2048()
+    st.session_state.game=Game2048()
 if "agent" not in st.session_state:
-    st.session_state.agent = ExpectimaxAgent(depth=3)
+    st.session_state.agent=ExpectimaxAgent(depth=3)
 if "autoplay" not in st.session_state:
-    st.session_state.autoplay = False
+    st.session_state.autoplay=False
+if "prev_grid" not in st.session_state:
+    st.session_state.prev_grid=None
+if "best_score" not in st.session_state:
+    st.session_state.best_score=0
 
-game = st.session_state.game
-agent = st.session_state.agent
+game=st.session_state.game
+agent=st.session_state.agent
 
-# ---------- CSS + Animation ----------
+# UI CSS
 st.markdown("""
 <style>
 .board { display:flex; flex-direction:column; align-items:center; }
 .row { display:flex; gap:12px; margin-bottom:12px; }
 .tile {
-  width:94px; height:94px; border-radius:10px;
+  width:86px; height:86px; border-radius:10px;
   display:flex; align-items:center; justify-content:center;
-  font-weight:700; font-size:30px;
-  transition: transform 0.14s ease, opacity 0.18s ease, box-shadow 0.12s ease;
-  box-shadow: inset 0 -6px rgba(0,0,0,0.08);
+  font-weight:700; font-size:26px;
+  transition: transform 0.12s ease, opacity 0.16s ease;
 }
-.tile.new { transform: scale(1.12); opacity:0; animation: appear 160ms ease forwards; }
-@keyframes appear {
-  from { transform: scale(1.18); opacity:0; }
-  to   { transform: scale(1); opacity:1; }
-}
-.container { background: transparent; padding: 6px; }
-.controls { display:flex; gap:12px; margin-top:14px; justify-content:center; }
+.tile.new { transform:scale(1.12); opacity:0; animation:appear 140ms ease forwards; }
+@keyframes appear { from {transform:scale(1.18); opacity:0} to {transform:scale(1); opacity:1} }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- COLORS ----------
-COLORS = {
-    0: "#cdc1b4",
-    2: "#eee4da",
-    4: "#ede0c8",
-    8: "#f2b179",
-    16: "#f59563",
-    32: "#f67c5f",
-    64: "#f65e3b",
-    128: "#edcf72",
-    256: "#edcc61",
-    512: "#edc850",
-    1024: "#edc53f",
-    2048: "#edc22e"
+COLORS={
+    0:"#efe6dd",
+    2:"#f7f2ec",
+    4:"#efe6d9",
+    8:"#f2b179",
+    16:"#f59563",
+    32:"#f67c5f",
+    64:"#f65e3b",
+    128:"#eddc9a",
+    256:"#edcf74",
+    512:"#edc850",
+    1024:"#edc53f",
+    2048:"#edc22e"
 }
 
-# ---------- BUTTONS FIRST (fix double-press) ----------
-# Place buttons above render so clicks take effect this run
-col_left, col_right, col_up, col_down = st.columns(4)
-btn_left = col_left.button("⬅️ Left")
-btn_right = col_right.button("➡️ Right")
-btn_up = col_up.button("⬆️ Up")
-btn_down = col_down.button("⬇️ Down")
-
-# AI buttons
-ai_c1, ai_c2, ai_c3 = st.columns([1,1,2])
-btn_ai = ai_c1.button("🤖 AI Move")
-btn_restart = ai_c2.button("🔄 Restart")
-depth = ai_c3.slider("AI depth", 1, 4, 3)
-st.session_state.agent = ExpectimaxAgent(depth=depth)
-autoplay_toggle = st.checkbox("Autoplay (AI plays)", value=st.session_state.autoplay)
-st.session_state.autoplay = autoplay_toggle
-
-# Execute button actions (each click triggers a single move immediately)
-if btn_left:
-    game.move("left")
-if btn_right:
-    game.move("right")
-if btn_up:
-    game.move("up")
-if btn_down:
-    game.move("down")
-if btn_ai:
-    mv = agent.get_best_move(game)
-    if mv:
-        game.move(mv)
-if btn_restart:
-    st.session_state.game = Game2048()
-    st.experimental_rerun()
-
-# Autoplay (no infinite Python loop). Do one AI step per render and use JS reload to continue.
-if st.session_state.autoplay:
-    if game.can_move():
-        mv = agent.get_best_move(game)
-        if mv:
-            game.move(mv)
-            # small JS reload to emulate continuous play; safe and avoids experimental_rerun loops
-            st.markdown("<script>setTimeout(()=>window.location.reload(), 160);</script>", unsafe_allow_html=True)
-    else:
-        st.session_state.autoplay = False
-        st.success("Autoplay finished — no moves left.")
-
-# ---------- Render Board AS ONE HTML CHUNK (prevents stacking) ----------
-def board_html_with_new_flags(grid, prev_grid):
-    # We mark new tiles where prev_grid had 0 and grid has non-zero
-    tile_size = 94
-    gap = 12
-    board_width = tile_size * len(grid[0]) + gap * (len(grid[0]) - 1)
-    html = f"<div class='board'><div class='container' style='width:{board_width}px;'>"
-    for r in range(len(grid)):
-        html += "<div class='row'>"
-        for c in range(len(grid[r])):
-            v = grid[r][c]
-            color = COLORS.get(v, "#3c3a32")
-            label = str(v) if v != 0 else ""
-            text_col = "#f9f6f2" if v >= 8 else "#776e65"
-            # detect newly spawned tile for animation
-            is_new = prev_grid is not None and prev_grid[r][c] == 0 and v != 0
-            new_class = " new" if is_new else ""
-            html += (f"<div class='tile{new_class}' style='background:{color};color:{text_col};"
-                     f"width:{tile_size}px;height:{tile_size}px'>{label}</div>")
-        html += "</div>"
-    html += "</div></div>"
+def board_html(grid, prev):
+    tile_size=86
+    gap=12
+    html="<div class='board'>"
+    for r in range(4):
+        html+="<div class='row'>"
+        for c in range(4):
+            v=grid[r][c]
+            col=COLORS.get(v,"#3c3a32")
+            text="#f9f6f2" if v>=8 else "#776e65"
+            is_new=prev and prev[r][c]==0 and v!=0
+            new_class=" new" if is_new else ""
+            label=str(v) if v!=0 else ""
+            html+=f"<div class='tile{new_class}' style='background:{col};color:{text};width:{tile_size}px;height:{tile_size}px'>{label}</div>"
+        html+="</div>"
+    html+="</div>"
     return html
 
-# For animation detection: we store previous grid in session_state
-if "prev_grid" not in st.session_state:
-    st.session_state.prev_grid = None
-
-# Render board (after handling buttons)
-html = board_html_with_new_flags(game.grid, st.session_state.prev_grid)
+# Render board FIRST
+html = board_html(game.grid, st.session_state.prev_grid)
 st.markdown(html, unsafe_allow_html=True)
 st.subheader(f"Score: {game.score}")
 
-# Update previous grid snapshot (deep copy)
 st.session_state.prev_grid = copy.deepcopy(game.grid)
+
+# ------------------------------------------------------------
+#           CONTROLS BELOW THE BOARD
+# ------------------------------------------------------------
+st.markdown("### Controls")
+
+c1,c2,c3,c4 = st.columns(4)
+left_btn  = c1.button("⬅️ Left")
+up_btn    = c2.button("⬆️ Up")
+down_btn  = c3.button("⬇️ Down")
+right_btn = c4.button("➡️ Right")
+
+if left_btn:  game.move("left")
+if right_btn: game.move("right")
+if up_btn:    game.move("up")
+if down_btn:  game.move("down")
+
+# AI Controls
+st.markdown("### AI Controls")
+ai_c1, ai_c2, ai_c3 = st.columns([1,1,2])
+ai_btn = ai_c1.button("🤖 AI Move")
+restart_btn = ai_c2.button("🔄 Restart")
+depth = ai_c3.slider("Search Depth", 1, 4, 3)
+agent.depth = depth
+
+autoplay = st.checkbox("Autoplay AI", value=st.session_state.autoplay)
+st.session_state.autoplay = autoplay
+
+if ai_btn:
+    mv=agent.get_best_move(game)
+    if mv:
+        game.move(mv)
+
+if restart_btn:
+    st.session_state.game = Game2048()
+    st.session_state.prev_grid = None
+    st.session_state.agent.cache.clear()
+    st.session_state.autoplay=False
+    st.rerun()
+
+# Autoplay
+if st.session_state.autoplay:
+    if game.can_move():
+        mv=agent.get_best_move(game)
+        if mv:
+            game.move(mv)
+            st.markdown("<script>setTimeout(()=>window.location.reload(),160);</script>", unsafe_allow_html=True)
+    else:
+        st.session_state.autoplay=False
+        st.success("Autoplay finished.")
+
+max_tile=max(max(row) for row in game.grid)
+st.write(f"Max Tile: {max_tile}")
+
+
 
 # ---------- Extra info ----------
 max_tile = max(max(row) for row in game.grid)
 st.write("Max tile:", max_tile)
+
