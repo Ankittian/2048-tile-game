@@ -1,4 +1,3 @@
-# app.py — 2048 Game + Expectimax AI using SO reference heuristics
 import streamlit as st
 import random
 import copy
@@ -7,7 +6,7 @@ import numpy as np
 from typing import List, Tuple, Optional
 
 # ------------------------------------------------------------
-#                    2048 GAME ENGINE
+#                    GAME ENGINE
 # ------------------------------------------------------------
 class Game2048:
     def __init__(self, size=4, seed=None):
@@ -110,8 +109,9 @@ class Game2048:
         return moved, total_pts
 
 # ------------------------------------------------------------
-#              HEURISTICS FROM STACKOVERFLOW
+#          Heuristics
 # ------------------------------------------------------------
+
 def count_potential_merges(a):
     merges=0
     for r in range(4):
@@ -309,7 +309,7 @@ class ExpectimaxAgent:
             return val
 
 # ------------------------------------------------------------
-#                 STREAMLIT UI
+#                 STREAMLIT 
 # ------------------------------------------------------------
 st.set_page_config(page_title="2048 AI", page_icon="🎮", layout="centered")
 st.title("2048 — Expectimax AI (SO Strategies)")
@@ -328,7 +328,6 @@ if "best_score" not in st.session_state:
 game=st.session_state.game
 agent=st.session_state.agent
 
-# UI CSS
 st.markdown("""
 <style>
 .board { display:flex; flex-direction:column; align-items:center; }
@@ -377,7 +376,6 @@ def board_html(grid, prev):
     html+="</div>"
     return html
 
-# Render board FIRST
 html = board_html(game.grid, st.session_state.prev_grid)
 st.markdown(html, unsafe_allow_html=True)
 st.subheader(f"Score: {game.score}")
@@ -385,7 +383,7 @@ st.subheader(f"Score: {game.score}")
 st.session_state.prev_grid = copy.deepcopy(game.grid)
 
 # ------------------------------------------------------------
-#           CONTROLS BELOW THE BOARD
+#           CONTROLS 
 # ------------------------------------------------------------
 st.markdown("### Controls")
 
@@ -400,7 +398,7 @@ if right_btn: game.move("right")
 if up_btn:    game.move("up")
 if down_btn:  game.move("down")
 
-# AI Controls
+
 st.markdown("### AI Controls")
 ai_c1, ai_c2, ai_c3 = st.columns([1,1,2])
 ai_btn = ai_c1.button("🤖 AI Move")
@@ -439,7 +437,8 @@ st.write(f"Max Tile: {max_tile}")
 
 
 
-# ---------- Extra info ----------
+# ---------- Scoring ----------
 max_tile = max(max(row) for row in game.grid)
 st.write("Max tile:", max_tile)
+
 
