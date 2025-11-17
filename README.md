@@ -4,6 +4,12 @@ This project implements a fully playable **2048 Game** with a powerful **Expecti
 
 ---
 
+## 📌 Streamlit link:-
+https://2048-tile-game-2gszmlkvzslqkwjceha6p5.streamlit.app/
+
+
+---
+
 ## 📌 Project Summary
 This project contains:
 
