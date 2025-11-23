@@ -1,5 +1,3 @@
-# app.py — 2048 Game + Aggressive Merge-First Expectimax AI
-# Manual controls fixed: one click = slide -> merge -> slide -> spawn
 import streamlit as st
 import random
 import copy
@@ -7,9 +5,9 @@ import math
 import numpy as np
 from typing import List, Tuple, Optional
 
-# ---------------------------
-# 2048 Game Engine 
-# ---------------------------
+
+# Game engine 
+
 class Game2048:
     def __init__(self, size=4, seed=None):
         self.size = size
@@ -46,7 +44,6 @@ class Game2048:
             for c in range(self.size-1):
                 if self.grid[r][c] == self.grid[r][c+1]:
                     return True
-        
         for c in range(self.size):
             for r in range(self.size-1):
                 if self.grid[r][c] == self.grid[r+1][c]:
@@ -55,14 +52,11 @@ class Game2048:
 
     def move(self, direction: str):
         """
-        Official 2048 movement logic (atomic):
-        1) compress (slide)
-        2) merge adjacent equal tiles (only once per move)
-        3) compress again
-        After all rows/cols, if any change occurred -> spawn new tile (2/4)
+        Standard 2048 move: compress -> merge -> compress applied per row/col.
+        Returns (moved: bool, points_gained: int)
         """
         moved = False
-        total_points = 0
+        total_pts = 0
         N = self.size
 
         def compress(row):
@@ -72,7 +66,7 @@ class Game2048:
 
         def merge(row):
             pts = 0
-            for i in range(N - 1):
+            for i in range(N-1):
                 if row[i] != 0 and row[i] == row[i+1]:
                     row[i] *= 2
                     pts += row[i]
@@ -80,161 +74,73 @@ class Game2048:
             return row, pts
 
         for i in range(N):
-            if direction in ('left', 'right'):
+            if direction in ("left","right"):
                 row = self.grid[i][:]
-                if direction == 'right':
+                if direction == "right":
                     row.reverse()
-
                 row = compress(row)
                 row, pts = merge(row)
                 row = compress(row)
-
-                if direction == 'right':
+                if direction == "right":
                     row.reverse()
-
                 if row != self.grid[i]:
                     moved = True
                     self.grid[i] = row
-                    total_points += pts
-
-            else:  # up or down
+                    total_pts += pts
+            else:
                 col = [self.grid[r][i] for r in range(N)]
-                if direction == 'down':
+                if direction == "down":
                     col.reverse()
-
                 col = compress(col)
                 col, pts = merge(col)
                 col = compress(col)
-
-                if direction == 'down':
+                if direction == "down":
                     col.reverse()
-
                 if col != [self.grid[r][i] for r in range(N)]:
                     moved = True
                     for r in range(N):
                         self.grid[r][i] = col[r]
-                    total_points += pts
+                    total_pts += pts
 
         if moved:
-            self.score += total_points
+            self.score += total_pts
             self._add_random_tile()
 
-        return moved, total_points
+        return moved, total_pts
 
-# ---------------------------
-# Heuristics
-# ---------------------------
-def count_potential_merges(a: np.ndarray) -> int:
-    merges = 0
-    for r in range(4):
-        for c in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r,c+1]:
-                merges += 1
-    for c in range(4):
-        for r in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r+1,c]:
-                merges += 1
-    return merges
 
-def smoothness(a: np.ndarray) -> float:
-    logs = np.where(a>0, np.log2(a), 0.0)
-    s = 0.0
-    for r in range(4):
-        for c in range(4):
-            if a[r,c] == 0: continue
-            v = logs[r,c]
-            if c+1<4 and a[r,c+1]!=0:
-                s -= abs(v - logs[r,c+1])
-            if r+1<4 and a[r+1,c]!=0:
-                s -= abs(v - logs[r+1,c])
-    return s
+# Snake order & utility helpers 
 
-def rank_weighted_monotonicity(a: np.ndarray) -> float:
-    logs = np.where(a>0, np.log2(a), 0.0)
-    score = 0.0
-    for r in range(4):
-        for c in range(3):
-            if logs[r,c] < logs[r,c+1]:
-                score -= (logs[r,c] + logs[r,c+1]) * 0.5
-    for c in range(4):
-        for r in range(3):
-            if logs[r,c] < logs[r+1,c]:
-                score -= (logs[r,c] + logs[r+1,c]) * 0.5
-    return score
+SNAKE_ORDER = [
+    (3,3),(3,2),(3,1),(3,0),
+    (2,0),(2,1),(2,2),(2,3),
+    (1,3),(1,2),(1,1),(1,0),
+    (0,0),(0,1),(0,2),(0,3)
+]
 
-def corner_row_integrity(a: np.ndarray, corner=(3,3)) -> float:
-    logs = np.where(a>0, np.log2(a), 0.0)
-    r, c = corner
-    val = 0.0
-    val += np.sum(np.diff(logs[r,:]) <= 0) * 5.0
-    val += np.sum(np.diff(logs[:,c]) <= 0) * 5.0
-    return val
+def grid_to_array(grid: List[List[int]]) -> np.ndarray:
+    return np.array(grid, dtype=int)
 
-def snake_score(a: np.ndarray) -> float:
-    order = [
-        (3,0),(3,1),(3,2),(3,3),
-        (2,3),(2,2),(2,1),(2,0),
-        (1,0),(1,1),(1,2),(1,3),
-        (0,3),(0,2),(0,1),(0,0)
-    ]
-    logs = np.where(a>0, np.log2(a), 0.0)
-    score = 0.0
-    for i in range(len(order)-1):
-        r1,c1 = order[i]
-        r2,c2 = order[i+1]
-        v1 = logs[r1,c1]
-        v2 = logs[r2,c2]
-        if v1 >= v2:
-            score += v1
-        else:
-            score -= 3.0 * v1
-    return score
+def snake_sequence_values(a: np.ndarray) -> List[int]:
+    return [int(a[r,c]) for (r,c) in SNAKE_ORDER]
 
-def immediate_merge_value(grid: List[List[int]]) -> int:
-    a = np.array(grid)
-    val = 0
-    for r in range(4):
-        for c in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r,c+1]:
-                val += a[r,c]*2
-    for c in range(4):
-        for r in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r+1,c]:
-                val += a[r,c]*2
-    return val
+def snake_violations(a: np.ndarray) -> int:
+    vals = snake_sequence_values(a)
+    violations = 0
+    for i in range(len(vals)-1):
+        if vals[i] < vals[i+1]:
+            violations += 1
+    return violations
 
-def max_tile_merge_pressure(a: np.ndarray) -> float:
-    reward = 0.0
-    for r in range(4):
-        for c in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r,c+1]:
-                v = a[r,c] * 2
-                reward += (math.log2(v) ** 3) * 40.0
-    for c in range(4):
-        for r in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r+1,c]:
-                v = a[r,c] * 2
-                reward += (math.log2(v) ** 3) * 40.0
-    return reward
+def tile_positions(a: np.ndarray, value: int) -> List[Tuple[int,int]]:
+    coords = list(zip(*np.where(a==value)))
+    return coords
 
-def merge_toward_corner_bonus(grid: List[List[int]], corner=(3,3)) -> float:
-    a = np.array(grid)
-    cr, cc = corner
-    bonus = 0.0
-    for r in range(4):
-        for c in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r,c+1]:
-                if cc == 3:
-                    bonus += math.log2(a[r,c]) * 90.0
-    for c in range(4):
-        for r in range(3):
-            if a[r,c] != 0 and a[r,c] == a[r+1,c]:
-                if cr == 3:
-                    bonus += math.log2(a[r,c]) * 90.0
-    return bonus
+def manhattan(p1: Tuple[int,int], p2: Tuple[int,int]) -> int:
+    return abs(p1[0]-p2[0]) + abs(p1[1]-p2[1])
 
 def immediate_merge_max_value(grid: List[List[int]]) -> int:
-    a = np.array(grid)
+    a = grid_to_array(grid)
     best = 0
     for r in range(4):
         for c in range(3):
@@ -246,10 +152,108 @@ def immediate_merge_max_value(grid: List[List[int]]) -> int:
                 best = max(best, a[r,c]*2)
     return best
 
-# ---------------------------
+# Heuristics
+
+def strict_tile_alignment_penalty(a: np.ndarray) -> float:
+    """
+    Hard enforcement: each snake pair must be non-increasing.
+    For each violation apply huge penalty (very large number).
+    Also check whether 'expected' positions for top tiles are respected.
+    """
+    violations = snake_violations(a)
+    penalty = -3200.0 * violations
+
+    # We penalize if major tiles (>= 128) are not in top snake slots toward corner.
+    maxv = int(a.max()) if a.size>0 else 0
+    # expected positions for descending big tiles: assign first few snake slots
+    big_thresholds = [maxv, maxv//2, maxv//4, maxv//8]
+    # map values to nearest snake index
+    for t in big_thresholds:
+        if t <= 0: continue
+        coords = tile_positions(a, t)
+        if not coords:
+            # if tile is missing (already merged), no penalty
+            continue
+        # pick top-left-most coordinate of that tile occurrence and check if it lies in early snake positions
+        r,c = coords[0]
+        snake_index = SNAKE_ORDER.index((3,3))  # base index 0
+        # find the index of the position (r,c) in SNAKE_ORDER
+        idx = SNAKE_ORDER.index((r,c)) if (r,c) in SNAKE_ORDER else 999
+        # prefer idx small (close to corner). penalize if idx large
+        if idx > 3:
+            penalty -= 1600.0  # strong penalty for big tile away from corner area
+    return penalty
+
+def merge_clustering_reward(a: np.ndarray) -> float:
+    """
+    Reward large tiles being near their likely merge partner.
+    E.g., reward proximity of 128 to 256, 64 to 128, etc.
+    """
+    reward = 0.0
+    vals = sorted(set(a.flatten()) - {0})
+    # for each pair (v -> 2v) if both present, reward proximity
+    for v in vals:
+        if v == 0: continue
+        coords_v = tile_positions(a, v)
+        coords_2v = tile_positions(a, v*2)
+        if coords_v and coords_2v:
+            # compute min distance
+            dmin = min(manhattan(p,q) for p in coords_v for q in coords_2v)
+            # reward closeness (closer = larger reward)
+            reward += max(0, (6 - dmin)) * math.log2(v+1) * 60.0
+    return reward
+
+def smoothness_score(a: np.ndarray) -> float:
+    logs = np.where(a>0, np.log2(a), 0.0)
+    s = 0.0
+    for r in range(4):
+        for c in range(4):
+            if a[r,c] == 0: continue
+            v = logs[r,c]
+            if c+1<4 and a[r,c+1]!=0:
+                s -= abs(v - logs[r,c+1]) * 4.0
+            if r+1<4 and a[r+1,c]!=0:
+                s -= abs(v - logs[r+1,c]) * 4.0
+    return s
+
+def empties_score(a: np.ndarray) -> float:
+    return float(np.sum(a==0)) * 200.0
+
+def corner_lock_bonus(a: np.ndarray, corner=(3,3)) -> float:
+    maxv = int(a.max())
+    if maxv == 0:
+        return 0.0
+    r,c = corner
+    if a[r,c] == maxv:
+        return math.log2(maxv) * 300.0
+    else:
+        return -math.log2(maxv) * 800.0  # heavy penalty if max not in corner
+
+def heuristic_combined(grid: List[List[int]], last_move: Optional[str]=None) -> float:
+    """
+    Combined heuristic tuned for strict snake enforcement:
+    - heavy negative for any snake violations
+    - heavy negative if large tiles not aligned near corner
+    - reward clustering of merge partners
+    - reward empties and smoothness moderately
+    - corner lock strongly enforced
+    """
+    a = grid_to_array(grid)
+    base = 0.0
+    base += strict_tile_alignment_penalty(a)          # very large negative on violations
+    base += merge_clustering_reward(a)                # encourages bringing pairs together
+    base += smoothness_score(a)                       # smoother boards preferred
+    base += empties_score(a)                          # survival
+    base += corner_lock_bonus(a)                      # keep max tile in corner
+    # small progress bonus
+    maxv = int(a.max())
+    base += math.log(maxv+1) * 48.0
+    return float(base)
+
 # Expectimax Agent 
-# ---------------------------
+
 class ExpectimaxAgent:
+
     def __init__(self, depth=3, preferred_corner=(3,3), skip_fours=True):
         self.depth = depth
         self.preferred_corner = preferred_corner
@@ -257,25 +261,25 @@ class ExpectimaxAgent:
         self.actions = ['up','down','left','right']
         self.cache = {}
 
-    def dynamic_priority(self, game: Game2048) -> List[str]:
-        empties = sum(row.count(0) for row in game.grid)
-        if empties >= 7:
-            return ['down','right','left','up']
-        if 3 <= empties < 7:
-            return ['down','right','up','left']
-        return ['right','down','up','left']
+    def reverse_move(self, mv: str) -> str:
+        return {'up':'down','down':'up','left':'right','right':'left'}.get(mv, '')
 
     def breaks_corner(self, before_grid, after_grid):
-        a = np.array(before_grid)
-        b = np.array(after_grid)
+        a = grid_to_array(before_grid)
+        b = grid_to_array(after_grid)
         maxv = a.max()
         r,c = self.preferred_corner
         return (a[r,c] == maxv) and (b[r,c] != maxv)
 
+    def increases_violations(self, before_grid, after_grid) -> bool:
+        a = grid_to_array(before_grid)
+        b = grid_to_array(after_grid)
+        return snake_violations(b) > snake_violations(a)
+
     def get_best_move(self, game: Game2048) -> Optional[str]:
         empties = sum(row.count(0) for row in game.grid)
         depth = 4 if empties <= 3 else self.depth
-        preferred_order = self.dynamic_priority(game)
+        last_move = st.session_state.get("last_move", None)
 
         best_move = None
         best_val = -float('inf')
@@ -283,55 +287,58 @@ class ExpectimaxAgent:
 
         current_max = max(max(row) for row in game.grid)
 
-        for a in preferred_order:
+        # order actions by heuristic quick estimate
+        for a in ['right','down','left','up']:
             g = game.clone()
             moved, _ = g.move(a)
             if not moved:
                 continue
 
-            immediate_best_merge = immediate_merge_max_value(g.grid)
-            aggressive_merge_allowed = immediate_best_merge >= current_max
-
-            if self.breaks_corner(game.grid, g.grid) and not aggressive_merge_allowed:
+            # HARD corner: if move would move max tile out of corner, disallow unless it produces immediate significant merge
+            immediate_merge = immediate_merge_max_value(g.grid)
+            if self.breaks_corner(game.grid, g.grid) and not (immediate_merge >= current_max):
+                # store as violating fallback
                 violating.append((a,g))
                 continue
 
+            # also disallow moves that increase snake violations heavily
+            if self.increases_violations(game.grid, g.grid):
+                # allow as violating fallback only
+                violating.append((a,g))
+                continue
+
+            # compute expectimax score
             val = self._expectimax(g, depth-1, is_player=False)
 
-            val += max_tile_merge_pressure(np.array(g.grid))
-            val += merge_toward_corner_bonus(g.grid, self.preferred_corner)
-            future_adj = immediate_merge_max_value(g.grid)
-            if future_adj > 0:
-                val += math.log1p(future_adj) * 160.0
+            # anti-oscillation: penalize immediate reverse of last move strongly
+            if last_move and a == self.reverse_move(last_move):
+                val -= 800.0
 
-            val += snake_score(np.array(g.grid)) * 3.0
-
-            empties_before = sum(row.count(0) for row in game.grid)
-            empties_after = sum(row.count(0) for row in g.grid)
-            val += (empties_after - empties_before) * 250.0
+            # steer by heuristic combined
+            val += heuristic_combined(g.grid, last_move)
 
             if val > best_val:
                 best_val = val
                 best_move = a
 
+        # if no allowed move, choose best among violating (forced)
         if best_move is None and violating:
             best_v = -float('inf')
             for a,g in violating:
-                val = heuristic_combined(g.grid, corner=self.preferred_corner)
-                val += max_tile_merge_pressure(np.array(g.grid))
-                val += merge_toward_corner_bonus(g.grid, self.preferred_corner)
-                if val > best_v:
-                    best_v = val
+                v = heuristic_combined(g.grid, last_move)
+                if v > best_v:
+                    best_v = v
                     best_move = a
 
+        # fallback to any legal move
         if best_move is None:
             for a in self.actions:
                 g = game.clone()
-                moved, _ = g.move(a)
+                moved,_ = g.move(a)
                 if not moved: continue
-                val = self._expectimax(g, depth-1, is_player=False)
-                if val > best_val:
-                    best_val = val
+                v = self._expectimax(g, depth-1, is_player=False)
+                if v > best_val:
+                    best_val = v
                     best_move = a
 
         return best_move
@@ -342,7 +349,7 @@ class ExpectimaxAgent:
             return self.cache[key]
 
         if depth == 0 or not game.can_move():
-            val = heuristic_combined(game.grid, corner=self.preferred_corner)
+            val = heuristic_combined(game.grid, st.session_state.get("last_move", None))
             self.cache[key] = val
             return val
 
@@ -355,17 +362,15 @@ class ExpectimaxAgent:
                 val = self._expectimax(g2, depth-1, is_player=False)
                 best = max(best, val)
             if best == -float('inf'):
-                best = heuristic_combined(game.grid, corner=self.preferred_corner)
+                best = heuristic_combined(game.grid, st.session_state.get("last_move", None))
             self.cache[key] = best
             return best
-
         else:
             empties = [(r,c) for r in range(game.size) for c in range(game.size) if game.grid[r][c] == 0]
             if not empties:
-                val = heuristic_combined(game.grid, corner=self.preferred_corner)
+                val = heuristic_combined(game.grid, st.session_state.get("last_move", None))
                 self.cache[key] = val
                 return val
-
             total = 0.0
             for (r,c) in empties:
                 g2 = game.clone()
@@ -378,56 +383,17 @@ class ExpectimaxAgent:
                 else:
                     g4 = game.clone()
                     g4.grid[r][c] = 4
-                    total += 0.1 * heuristic_combined(g4.grid, corner=self.preferred_corner)
+                    total += 0.1 * heuristic_combined(g4.grid, st.session_state.get("last_move", None))
             val = total / len(empties)
             self.cache[key] = val
             return val
 
-# ---------------------------
-# Full heuristic )
-# ---------------------------
-def heuristic_combined(grid: List[List[int]], corner=(3,3)) -> float:
-    a = np.array(grid, dtype=int)
-    empties = float(np.sum(a == 0))
-    merges = float(count_potential_merges(a))
-    smooth = float(smoothness(a))
-    rank_mono = float(rank_weighted_monotonicity(a))
-    corner_integrity = float(corner_row_integrity(a, corner))
-    snake = float(snake_score(a))
-    max_tile = int(a.max()) if a.max() > 0 else 0
+# Streamlit UI
 
-    if max_tile > 0:
-        if a[corner] == max_tile:
-            corner_bonus = float(max_tile) * 8.0
-        else:
-            corner_bonus = -float(max_tile) * 6.0
-    else:
-        corner_bonus = 0.0
+st.set_page_config(page_title="2048 AI — Strict Snake (Max enforcement)", page_icon="🎮", layout="centered")
+st.title("2048 — Expectimax with MAX Snake Enforcement (A)")
 
-    merge_pressure = max_tile_merge_pressure(a)
-    merge_dir_bonus = merge_toward_corner_bonus(grid, corner)
-
-    score = 0.0
-    score += empties * 240.0
-    score += merges * 120.0
-    score += smooth * 1.0
-    score += rank_mono * 6.0
-    score += corner_integrity * 16.0
-    score += snake * 2.5
-    score += corner_bonus
-    score += merge_pressure
-    score += merge_dir_bonus
-    score += math.log(max_tile+1) * 36.0
-
-    return float(score)
-
-# ---------------------------
-# Streamlit UI - 
-# ---------------------------
-st.set_page_config(page_title="2048 AI (Aggressive Merge)", page_icon="🎮", layout="centered")
-st.title("2048 — Aggressive Merge-First Expectimax AI (Option A)")
-
-# initialize session state
+# initialize session keys safely
 if "game" not in st.session_state:
     st.session_state.game = Game2048()
 if "agent" not in st.session_state:
@@ -442,59 +408,82 @@ if "autoplay_mode" not in st.session_state:
     st.session_state.autoplay_mode = "Off"
 if "stagnant_count" not in st.session_state:
     st.session_state.stagnant_count = 0
+if "last_move" not in st.session_state:
+    st.session_state.last_move = None
 
 game = st.session_state.game
 agent = st.session_state.agent
 
-# Button Controls
+# BUTTON HANDLERS 
+btn_c1, btn_c2, btn_c3, btn_c4 = st.columns([1,1,1,1])
+btn_left  = btn_c1.button("⬅️ Left")
+btn_up    = btn_c2.button("⬆️ Up")
+btn_down  = btn_c3.button("⬇️ Down")
+btn_right = btn_c4.button("➡️ Right")
 
-btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1,1,1,1])
-btn_left  = btn_col1.button("⬅️ Left")
-btn_up    = btn_col2.button("⬆️ Up")
-btn_down  = btn_col3.button("⬇️ Down")
-btn_right = btn_col4.button("➡️ Right")
-
-# AI controls
 ai_c1, ai_c2, ai_c3 = st.columns([1,1,2])
 btn_ai = ai_c1.button("🤖 AI Move")
 btn_restart = ai_c2.button("🔄 Restart")
-depth = ai_c3.slider("Expectimax Base Depth", 1, 5, 3)
+depth = ai_c3.slider("Expectimax Base Depth", 1, 4, 3)
 agent.depth = depth
 
+autoplay_mode = st.selectbox(
+    "Autoplay Mode",
+    ["Off", "Play until no moves", "Play until target tile"],
+    index=["Off","Play until no moves","Play until target tile"].index(st.session_state.autoplay_mode)
+)
+st.session_state.autoplay_mode = autoplay_mode
+if autoplay_mode == "Play until target tile":
+    target_tile = st.selectbox("Target Tile", [256,512,1024,2048], index=3)
+    st.session_state.target_tile = target_tile
 
-# Perform actions based on clicks — these happen BEFORE rendering the board
+# Restart 
+# --- BEFORE ANY UI IS RENDERED ---
+if "restart" not in st.session_state:
+    st.session_state.restart = False
+
+if btn_restart:
+    st.session_state.restart = True
+    st.experimental_rerun()
+
+if st.session_state.restart:
+    # Reset only custom state variables (never internal Streamlit keys)
+    for key in [
+        "game", "agent", "prev_grid", "prev_prev_grid", "best_score",
+        "autoplay_mode", "stagnant_count", "last_move", "target_tile"
+    ]:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.session_state.restart = False
+    st.session_state.game = Game2048()
+    st.session_state.agent = ExpectimaxAgent(depth=3)
+    st.experimental_rerun()
+
+
+# perform manual moves and update last_move
 if btn_left:
-    game.move("left")
+    moved,_ = game.move("left")
+    if moved: st.session_state.last_move = "left"
 if btn_right:
-    game.move("right")
+    moved,_ = game.move("right")
+    if moved: st.session_state.last_move = "right"
 if btn_up:
-    game.move("up")
+    moved,_ = game.move("up")
+    if moved: st.session_state.last_move = "up"
 if btn_down:
-    game.move("down")
+    moved,_ = game.move("down")
+    if moved: st.session_state.last_move = "down"
 
+# AI move
 if btn_ai:
     mv = agent.get_best_move(game)
     if mv:
-        game.move(mv)
+        moved,_ = game.move(mv)
+        if moved:
+            st.session_state.last_move = mv
+        agent.cache.clear()  
 
-if btn_restart:
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-
-    st.session_state.game = Game2048()
-    st.session_state.agent = ExpectimaxAgent(depth=3)
-    st.session_state.prev_grid = None
-    st.session_state.prev_prev_grid = None
-    st.session_state.best_score = 0
-    st.session_state.autoplay_mode = "Off"
-    st.session_state.stagnant_count = 0
-
-    st.rerun()  
-
-# ---------------------------
-# Board rendering 
-# ---------------------------
-# CSS + tile styles
+# Rendering (after inputs)
 st.markdown("""
 <style>
 .board { display:flex; flex-direction:column; align-items:center; margin-top:10px; }
@@ -511,18 +500,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 COLORS = {
-    0: "#efe6dd",
-    2: "#f7f2ec",
-    4: "#efe6d9",
-    8: "#f2b179",
-    16: "#f59563",
-    32: "#f67c5f",
-    64: "#f65e3b",
-    128: "#eddc9a",
-    256: "#edcf74",
-    512: "#edc850",
-    1024: "#edc53f",
-    2048: "#edc22e"
+    0: "#efe6dd", 2:"#f7f2ec", 4:"#efe6d9", 8:"#f2b179", 16:"#f59563",
+    32:"#f67c5f", 64:"#f65e3b", 128:"#eddc9a", 256:"#edcf74", 512:"#edc850",
+    1024:"#edc53f", 2048:"#edc22e"
 }
 
 def board_html(grid, prev):
@@ -542,16 +522,15 @@ def board_html(grid, prev):
     html += "</div>"
     return html
 
-# Render board AFTER processing inputs
 html = board_html(game.grid, st.session_state.prev_grid)
 st.markdown(html, unsafe_allow_html=True)
 st.subheader(f"Score: {game.score}")
 
-# update previous grid snapshots for animation/new-tile detection
+# update prev snapshots for animation
 st.session_state.prev_prev_grid = copy.deepcopy(st.session_state.prev_grid) if st.session_state.prev_grid is not None else None
 st.session_state.prev_grid = copy.deepcopy(game.grid)
 
-# Track stagnation: if grid unchanged for two runs -> increment stagnant_count
+# stagnation detection
 if st.session_state.prev_prev_grid is not None:
     if st.session_state.prev_prev_grid == st.session_state.prev_grid:
         st.session_state.stagnant_count += 1
@@ -560,13 +539,13 @@ if st.session_state.prev_prev_grid is not None:
 
 
 
-
-# Footer info
+# footer
 if game.score > st.session_state.best_score:
     st.session_state.best_score = game.score
 max_tile = max(max(row) for row in game.grid)
 st.write(f"Max Tile: {max_tile} | Best Score: {st.session_state.best_score}")
-st.markdown("<div style='font-size:13px;color:#666'>Agent: Aggressive merge-first Expectimax. Manual controls are atomic (1-click = full move + spawn).</div>", unsafe_allow_html=True)
+st.markdown("<div style='font-size:13px;color:#666'>Mode: MAX Snake Enforcement (A). No debug overlay. Uploaded board image (for reference): /mnt/data/89f08ad2-5dbb-4ae5-83d1-b80cc1d80c5d.png</div>", unsafe_allow_html=True)
+
 
 
 
